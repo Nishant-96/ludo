@@ -2,6 +2,10 @@
   "name": "ludo",
   "version": "1.0.0",
   "private": true,
+  "packageManager": "pnpm@10.32.1",
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  },
   "scripts": {
     "dev": "concurrently \"pnpm --filter server dev\" \"pnpm --filter web dev\"",
     "build": "pnpm --filter shared build && pnpm --filter web build && pnpm --filter server build",
