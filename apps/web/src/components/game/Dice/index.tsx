@@ -22,13 +22,22 @@ export const Dice: FC<DiceProps> = ({ roomCode, diceValue, isMyTurn, hasRolled }
     setIsRolling(true);
     setError(null);
 
+    // Safety timeout: if the socket callback never fires (network drop, server
+    // crash), release the rolling state so the button isn't permanently locked.
+    const timeout = setTimeout(() => {
+      setIsRolling(false);
+      setError('Roll timed out — please try again');
+    }, 8_000);
+
     try {
       const socket = getSocket();
       socket.emit('dice:roll', { roomCode }, (res) => {
+        clearTimeout(timeout);
         setIsRolling(false);
         if (!res.ok) setError(res.error ?? 'Failed to roll');
       });
     } catch {
+      clearTimeout(timeout);
       setIsRolling(false);
       setError('Not connected');
     }

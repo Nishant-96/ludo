@@ -29,7 +29,7 @@ export const recordMove = async (params: {
   fromPos: number;
   toPos: number;
 }): Promise<void> => {
-  await db.from('moves').insert({
+  const { error } = await db.from('moves').insert({
     match_id: params.matchId,
     user_id: params.userId,
     dice_value: params.diceValue,
@@ -37,18 +37,21 @@ export const recordMove = async (params: {
     from_pos: params.fromPos,
     to_pos: params.toPos,
   });
+  if (error) throw new Error(`Failed to record move: ${error.message}`);
 };
 
 // Called in the catch path of game:start to roll back a match whose fee deduction failed.
 export const deleteMatch = async (matchId: string): Promise<void> => {
-  // Participants have a FK cascade on match delete, but delete explicitly to be safe
-  await db.from('match_participants').delete().eq('match_id', matchId);
-  await db.from('matches').delete().eq('id', matchId);
+  const { error: pErr } = await db.from('match_participants').delete().eq('match_id', matchId);
+  if (pErr) throw new Error(`Failed to delete match participants: ${pErr.message}`);
+  const { error: mErr } = await db.from('matches').delete().eq('id', matchId);
+  if (mErr) throw new Error(`Failed to delete match: ${mErr.message}`);
 };
 
 export const endMatch = async (matchId: string, winnerId: string): Promise<void> => {
-  await db
+  const { error } = await db
     .from('matches')
     .update({ status: 'completed', ended_at: new Date().toISOString(), winner_user_id: winnerId })
     .eq('id', matchId);
+  if (error) throw new Error(`Failed to end match: ${error.message}`);
 };

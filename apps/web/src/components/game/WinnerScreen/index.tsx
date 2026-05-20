@@ -26,6 +26,7 @@ export const WinnerScreen: FC<WinnerScreenProps> = ({ gameState, currentUserId, 
   const isMultiplayer = gameState.players.filter((p) => !p.isForfeited).length > 1;
 
   const sendVote = (vote: 'yes' | 'no'): void => {
+    if (isVoting) return;
     setIsVoting(true);
     setVoteError(null);
 
@@ -61,7 +62,6 @@ export const WinnerScreen: FC<WinnerScreenProps> = ({ gameState, currentUserId, 
         </p>
       </div>
 
-      {/* Coin economy summary */}
       <div className="relative z-10 w-full max-w-xs rounded-xl bg-slate-800 px-5 py-4 text-sm">
         <div className="flex justify-between text-slate-400">
           <span>Entry fee paid</span>
@@ -83,7 +83,6 @@ export const WinnerScreen: FC<WinnerScreenProps> = ({ gameState, currentUserId, 
         )}
       </div>
 
-      {/* Play Again consent section */}
       <div className="relative z-10 flex flex-col items-center gap-3">
         {replayCancelledReason !== null && (
           <p className="text-sm text-amber-400">{replayCancelledReason}</p>

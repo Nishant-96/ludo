@@ -2,7 +2,7 @@ import { type FC, type ReactNode } from 'react';
 
 interface BadgeProps {
   children: ReactNode;
-  variant?: 'default' | 'success' | 'warning' | 'danger';
+  variant?: 'default' | 'success' | 'warning' | 'danger' | 'info';
 }
 
 const VARIANT_CLASSES = {
@@ -10,6 +10,7 @@ const VARIANT_CLASSES = {
   success: 'bg-emerald-900/50 text-emerald-400',
   warning: 'bg-amber-900/50 text-amber-400',
   danger:  'bg-red-900/50 text-red-400',
+  info:    'bg-indigo-900/50 text-indigo-400',
 } as const;
 
 export const Badge: FC<BadgeProps> = ({ children, variant = 'default' }) => (

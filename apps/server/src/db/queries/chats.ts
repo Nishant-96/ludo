@@ -9,18 +9,21 @@ export interface ChatMessage {
   timestamp: string;
 }
 
+// Returns the server-assigned created_at timestamp so the broadcast uses the same
+// value as the DB record — prevents live/replay timestamp mismatch.
 export const saveMessage = async (params: {
   roomId: string;
   userId: string;
   message: string;
-}): Promise<void> => {
-  const { error } = await db.from('chats').insert({
+}): Promise<string> => {
+  const { data, error } = await db.from('chats').insert({
     room_id: params.roomId,
     user_id: params.userId,
     message: params.message,
-  });
+  }).select('created_at').single();
 
-  if (error) throw new Error(`Failed to save chat message: ${error.message}`);
+  if (error || !data) throw new Error(`Failed to save chat message: ${error?.message}`);
+  return data.created_at as string;
 };
 
 export const getRoomMessages = async (roomId: string, limit = 50): Promise<ChatMessage[]> => {

@@ -5,7 +5,6 @@ import { GameView } from '@/components/game/GameView';
 import { useUserStore } from '@/store/userStore';
 import { useRoomStore } from '@/store/roomStore';
 import { useGameStore } from '@/store/gameStore';
-import { useSocket } from '@/hooks/useSocket';
 import { getSocket } from '@/lib/socket';
 import { Button } from '@/components/ui/Button';
 
@@ -17,8 +16,6 @@ export const RoomPage: FC = () => {
   const { gameState, clearGame } = useGameStore();
   const [isJoining, setIsJoining] = useState(true);
   const [joinError, setJoinError] = useState<string | null>(null);
-
-  useSocket();
 
   useEffect(() => {
     if (!code || !user) return;
@@ -36,11 +33,8 @@ export const RoomPage: FC = () => {
       });
     };
 
-    // Initial join
-    joinRoom();
-
-    // Re-join after Socket.IO auto-reconnect so the server calls handlePlayerReconnect
-    // and cancels the forfeit grace timer
+    if (socket.connected) joinRoom();
+    // Also handles reconnects — server cancels the forfeit timer on reconnect
     socket.on('connect', joinRoom);
 
     return () => {
@@ -48,10 +42,6 @@ export const RoomPage: FC = () => {
       clearRoom();
       clearGame();
     };
-  // code is the only value that should trigger a re-mount (route-level change).
-  // setRoom, clearRoom, clearGame are Zustand actions — stable across renders.
-  // user.id is intentionally excluded: token refresh updates the user object but
-  // the socket reconnect ('connect' event) already re-fires joinRoom.
   }, [code]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (isJoining) {
@@ -75,26 +65,16 @@ export const RoomPage: FC = () => {
 
   return (
     <div className="flex min-h-dvh flex-col bg-slate-900">
-      {/* Back nav — only shown in lobby, not during game */}
       {!isGameActive && (
         <header className="flex items-center gap-3 border-b border-slate-800 px-4 py-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate('/lobby')}>
-            ← Lobby
-          </Button>
+          <Button variant="ghost" size="sm" onClick={() => navigate('/lobby')}>← Lobby</Button>
           <span className="text-sm font-medium text-slate-400">Room · {room.code}</span>
         </header>
       )}
-
       {isGameActive ? (
         <GameView room={room} gameState={gameState} currentUserId={user.id} />
       ) : (
-        <RoomLobby
-          room={room}
-          currentUserId={user.id}
-          onGameStart={() => {
-            // game:state event from server will set gameState and trigger re-render
-          }}
-        />
+        <RoomLobby room={room} currentUserId={user.id} onGameStart={() => {}} />
       )}
     </div>
   );

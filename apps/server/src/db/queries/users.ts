@@ -59,7 +59,8 @@ export const createUser = async (params: {
   }
 
   // Create wallet with default 10,000 coins
-  await db.from('wallets').insert({ user_id: data.id });
+  const { error: walletError } = await db.from('wallets').insert({ user_id: data.id });
+  if (walletError) throw new Error(`Failed to create wallet for user: ${walletError.message}`);
 
   return {
     id: data.id,

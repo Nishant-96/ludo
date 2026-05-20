@@ -8,21 +8,23 @@ const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:4000';
 let socket: AppSocket | null = null;
 
 export const getSocket = (): AppSocket => {
-  if (!socket) {
-    throw new Error('Socket not connected. Call connectSocket first.');
-  }
+  if (!socket) throw new Error('Socket not connected. Call connectSocket first.');
   return socket;
 };
 
 export const connectSocket = (token: string): AppSocket => {
-  // Disconnect existing connection before creating a new one
-  if (socket?.connected) {
-    socket.disconnect();
+  if (socket) {
+    // Keep existing instance — all event handlers are bound to it.
+    // Destroying it would silently drop every registered listener.
+    socket.auth = { token };
+    if (socket.disconnected) socket.connect();
+    return socket;
   }
 
   socket = io(SERVER_URL, {
     auth: { token },
     autoConnect: true,
+    transports: ['websocket'],
     reconnection: true,
     reconnectionAttempts: 5,
     reconnectionDelay: 1000,

@@ -13,20 +13,12 @@ export type AppSocket = Socket<ClientToServerEvents, ServerToClientEvents> & { u
 export const registerSocketHandlers = (io: AppServer): void => {
   const registry = GameRoomRegistry.getInstance();
 
-  // Auth handshake — reject connection if no valid JWT
   io.use(async (socket, next) => {
     const token = socket.handshake.auth?.token as string | undefined;
-
-    if (!token) {
-      next(new Error('Authentication required'));
-      return;
-    }
+    if (!token) { next(new Error('Authentication required')); return; }
 
     const userId = await verifyToken(token);
-    if (!userId) {
-      next(new Error('Invalid or expired token'));
-      return;
-    }
+    if (!userId) { next(new Error('Invalid or expired token')); return; }
 
     (socket as AppSocket).userId = userId;
     next();

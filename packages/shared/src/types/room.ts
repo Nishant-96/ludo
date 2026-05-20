@@ -29,5 +29,6 @@ export interface RoomSummary {
   capacity: RoomCapacity;
   status: RoomStatus;
   playerCount: number;
+  participantIds: string[];
   createdAt: string;
 }

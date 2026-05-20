@@ -5,7 +5,6 @@ import { CreateRoomModal } from '@/components/lobby/CreateRoomModal';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { useUserStore } from '@/store/userStore';
-import { useSocket } from '@/hooks/useSocket';
 import { fetchRooms, fetchLeaderboard, fetchBalance, fetchActivePlayerCount } from '@/services/lobby';
 import { signOut } from '@/services/auth';
 import { getSocket } from '@/lib/socket';
@@ -21,15 +20,12 @@ export const LobbyPage: FC = () => {
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [activePlayerCount, setActivePlayerCount] = useState<number | null>(null);
 
-  // Register all global socket event handlers
-  useSocket();
-
   const loadRooms = useCallback(async (): Promise<void> => {
     try {
       const data = await fetchRooms();
       setRooms(data);
     } catch (err) {
-      console.error('[LobbyPage] Failed to fetch rooms:', err);
+      console.error('Failed to load rooms', err);
     } finally {
       setIsLoadingRooms(false);
     }
@@ -40,7 +36,7 @@ export const LobbyPage: FC = () => {
       const data = await fetchLeaderboard();
       setLeaderboard(data);
     } catch (err) {
-      console.error('[LobbyPage] Failed to fetch leaderboard:', err);
+      console.error('Failed to load leaderboard', err);
     } finally {
       setIsLoadingLeaderboard(false);
     }
@@ -49,22 +45,14 @@ export const LobbyPage: FC = () => {
   useEffect(() => {
     void loadRooms();
     void loadLeaderboard();
-    // Re-sync balance from server on lobby mount — guards against stale
-    // state after returning from a game (game:over updates it in-session,
-    // but a page refresh bypasses that handler).
-    fetchBalance().then(updateBalance).catch((err) => {
-      console.error('[LobbyPage] Failed to fetch balance:', err);
-    });
-    fetchActivePlayerCount().then(setActivePlayerCount).catch((err) => {
-      console.error('[LobbyPage] Failed to fetch stats:', err);
-    });
+    // Re-sync balance on mount — game:over updates it in-session but a refresh bypasses that handler
+    fetchBalance().then(updateBalance).catch(() => null);
+    fetchActivePlayerCount().then(setActivePlayerCount).catch(() => null);
 
-    // Poll rooms every 10s so list stays fresh without WebSocket subscription
     const interval = setInterval(() => void loadRooms(), 10_000);
     return () => clearInterval(interval);
   }, [loadRooms, loadLeaderboard, updateBalance]);
 
-  // Real-time leaderboard updates pushed by server after each game ends
   useEffect(() => {
     const socket = getSocket();
     const handleLeaderboardUpdate = ({ entries }: { entries: LeaderboardEntry[] }): void => {
@@ -86,7 +74,6 @@ export const LobbyPage: FC = () => {
 
   return (
     <div className="flex min-h-dvh flex-col bg-slate-900">
-      {/* Header */}
       <header className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
         <div className="flex items-center gap-3">
           <Avatar src={user.avatarUrl} displayName={user.displayName} size="md" />
@@ -108,9 +95,7 @@ export const LobbyPage: FC = () => {
         </Button>
       </header>
 
-      {/* Content */}
       <main className="flex flex-1 flex-col gap-6 overflow-y-auto p-4">
-        {/* Rooms */}
         <section>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-base font-semibold text-white">Open Rooms</h2>
@@ -126,7 +111,6 @@ export const LobbyPage: FC = () => {
           <RoomList rooms={rooms} isLoading={isLoadingRooms} />
         </section>
 
-        {/* Leaderboard */}
         <section>
           <h2 className="mb-3 text-base font-semibold text-white">Leaderboard</h2>
           <div className="rounded-xl bg-slate-800/50 px-2 py-1">

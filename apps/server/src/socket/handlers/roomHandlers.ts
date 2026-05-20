@@ -1,14 +1,24 @@
 import { randomUUID } from 'node:crypto';
 import type { AppServer, AppSocket } from '../index';
 import type { GameRoomRegistry } from '../../game/GameRoomRegistry';
+import type { GameRoom } from '../../game/GameRoom';
+import type { Room } from '@ludo/shared';
 import { getRoomByCode, createRoom, addPlayerToRoom, getNextAvailableColorAndCorner } from '../../db/queries/rooms';
 import { getUserById } from '../../db/queries/users';
 import { getBalance } from '../../db/queries/wallets';
 import { getRoomMessages } from '../../db/queries/chats';
 
-// 6-character room code: hex chars from a UUID segment, lowercased
 const generateRoomCode = (): string =>
   randomUUID().replace(/-/g, '').slice(0, 6).toLowerCase();
+
+// DB always returns isConnected: true; real-time status lives in memory.
+const mergeConnectionStatus = (room: Room, gameRoom: GameRoom): Room => ({
+  ...room,
+  players: room.players.map((p) => ({
+    ...p,
+    isConnected: gameRoom.getPlayer(p.userId)?.isConnected ?? true,
+  })),
+});
 
 export const registerRoomHandlers = (
   io: AppServer,
@@ -18,41 +28,28 @@ export const registerRoomHandlers = (
   socket.on('room:create', async ({ capacity }, callback) => {
     try {
       const user = await getUserById(socket.userId);
-      if (!user) {
-        callback({ ok: false, error: 'User not found' });
-        return;
-      }
+      if (!user) { callback({ ok: false, error: 'User not found' }); return; }
 
       const code = generateRoomCode();
       const room = await createRoom({ code, capacity, createdBy: socket.userId });
 
-      // Assign first color/corner to creator
       const { color, corner } = await getNextAvailableColorAndCorner(room.id);
       await addPlayerToRoom({ roomId: room.id, userId: socket.userId, color, corner });
 
-      // Track in memory
       const gameRoom = registry.getOrCreate(code);
       gameRoom.roomId = room.id;
-      gameRoom.addPlayer({
-        userId: socket.userId,
-        displayName: user.displayName,
-        color,
-        corner,
-        socketId: socket.id,
-        isConnected: true,
-        isForfeited: false,
-      });
+      gameRoom.createdBy = socket.userId;
+      gameRoom.addPlayer({ userId: socket.userId, displayName: user.displayName, color, corner, socketId: socket.id, isConnected: true, isForfeited: false });
       registry.trackUser(socket.userId, code);
 
       await socket.join(code);
 
-      // Fetch full room with players for response
       const fullRoom = await getRoomByCode(code);
       if (!fullRoom) throw new Error('Room not found after creation');
 
-      callback({ ok: true, data: { room: fullRoom } });
+      callback({ ok: true, data: { room: mergeConnectionStatus(fullRoom, gameRoom) } });
     } catch (err) {
-      console.error('room:create error:', err);
+      console.error('[room:create] Failed to create room', err);
       callback({ ok: false, error: 'Failed to create room' });
     }
   });
@@ -60,108 +57,93 @@ export const registerRoomHandlers = (
   socket.on('room:join', async ({ roomCode }, callback) => {
     try {
       const room = await getRoomByCode(roomCode);
+      if (!room) { callback({ ok: false, error: 'Room not found' }); return; }
 
-      if (!room) {
-        callback({ ok: false, error: 'Room not found' });
-        return;
-      }
-
-      if (room.status !== 'waiting') {
-        callback({ ok: false, error: 'Room is no longer accepting players' });
-        return;
-      }
-
-      // Check if player is rejoining (reconnect scenario)
-      const existingPlayer = room.players.find((p) => p.userId === socket.userId);
       const gameRoom = registry.getOrCreate(roomCode);
       gameRoom.roomId = room.id;
+      gameRoom.createdBy ??= room.createdBy;
+
+      const existingPlayer = room.players.find((p) => p.userId === socket.userId);
 
       if (existingPlayer) {
-        // Reconnect flow — handled via handlePlayerReconnect
-        gameRoom.handlePlayerReconnect(io, socket.userId, socket.id);
-        await socket.join(roomCode);
+        // Restore DB players into memory with live-socket-accurate isConnected
+        const liveSockets = await io.in(roomCode).fetchSockets();
+        const connectedSocketUserIds = new Set(liveSockets.map((s) => (s as unknown as AppSocket).userId));
 
-        // Replay chat history to reconnecting player
-        const history = await getRoomMessages(room.id);
-        for (const msg of history) {
-          socket.emit('chat:message', {
-            senderId: msg.senderId,
-            displayName: msg.displayName,
-            message: msg.message,
-            timestamp: msg.timestamp,
-          });
+        for (const p of room.players) {
+          if (!gameRoom.getPlayer(p.userId)) {
+            const isLive = p.userId === socket.userId || connectedSocketUserIds.has(p.userId);
+            gameRoom.addPlayer({ userId: p.userId, displayName: p.displayName, color: p.color, corner: p.corner, socketId: p.userId === socket.userId ? socket.id : '', isConnected: isLive, isForfeited: false });
+          }
         }
 
+        registry.trackUser(socket.userId, roomCode);
+
+        // Replay before join — handlePlayerReconnect broadcasts to all including this socket
+        const history = await getRoomMessages(room.id);
+        for (const msg of history) {
+          socket.emit('chat:message', { senderId: msg.senderId, displayName: msg.displayName, message: msg.message, timestamp: msg.timestamp });
+        }
+
+        await socket.join(roomCode);
+        gameRoom.handlePlayerReconnect(io, socket.userId, socket.id);
+
         const updatedRoom = await getRoomByCode(roomCode);
-        callback({ ok: true, data: { room: updatedRoom! } });
+        const mergedRoom = mergeConnectionStatus(updatedRoom!, gameRoom);
+        io.to(roomCode).emit('room:state', { room: mergedRoom });
+        callback({ ok: true, data: { room: mergedRoom } });
         return;
       }
 
-      if (room.players.length >= room.capacity) {
-        callback({ ok: false, error: 'Room is full' });
-        return;
-      }
+      await registry.withJoinLock(roomCode, async () => {
+        const currentRoom = await getRoomByCode(roomCode);
+        if (!currentRoom) { callback({ ok: false, error: 'Room not found' }); return; }
 
-      const balance = await getBalance(socket.userId);
-      if (balance < 100) {
-        callback({ ok: false, error: 'Insufficient coins to join (minimum 100 required)' });
-        return;
-      }
+        // Concurrent room:join for the same user (mount + connect event) — treat as reconnect
+        const alreadyJoined = currentRoom.players.find((p) => p.userId === socket.userId);
+        if (alreadyJoined) {
+          await socket.join(roomCode);
+          const merged = mergeConnectionStatus(currentRoom, gameRoom);
+          io.to(roomCode).emit('room:state', { room: merged });
+          callback({ ok: true, data: { room: merged } });
+          return;
+        }
 
-      const user = await getUserById(socket.userId);
-      if (!user) {
-        callback({ ok: false, error: 'User not found' });
-        return;
-      }
+        if (currentRoom.status !== 'waiting') { callback({ ok: false, error: 'Room is no longer accepting players' }); return; }
+        if (currentRoom.players.length >= currentRoom.capacity) { callback({ ok: false, error: 'Room is full' }); return; }
 
-      const { color, corner } = await getNextAvailableColorAndCorner(room.id);
-      await addPlayerToRoom({ roomId: room.id, userId: socket.userId, color, corner });
+        const balance = await getBalance(socket.userId);
+        if (balance < 100) { callback({ ok: false, error: 'Insufficient coins to join (minimum 100 required)' }); return; }
 
-      gameRoom.addPlayer({
-        userId: socket.userId,
-        displayName: user.displayName,
-        color,
-        corner,
-        socketId: socket.id,
-        isConnected: true,
-        isForfeited: false,
+        const user = await getUserById(socket.userId);
+        if (!user) { callback({ ok: false, error: 'User not found' }); return; }
+
+        const { color, corner } = await getNextAvailableColorAndCorner(currentRoom.id);
+        await addPlayerToRoom({ roomId: currentRoom.id, userId: socket.userId, color, corner });
+
+        gameRoom.addPlayer({ userId: socket.userId, displayName: user.displayName, color, corner, socketId: socket.id, isConnected: true, isForfeited: false });
+        registry.trackUser(socket.userId, roomCode);
+
+        // Emit before this socket joins so it doesn't receive its own player:joined
+        socket.to(roomCode).emit('player:joined', { player: { userId: socket.userId, displayName: user.displayName, avatarUrl: user.avatarUrl, color, corner, isConnected: true } });
+
+        const updatedRoom = await getRoomByCode(roomCode);
+        if (!updatedRoom) throw new Error('Room not found after join');
+
+        // Replay before join to avoid duplicate delivery
+        const history = await getRoomMessages(updatedRoom.id);
+        for (const msg of history) {
+          socket.emit('chat:message', { senderId: msg.senderId, displayName: msg.displayName, message: msg.message, timestamp: msg.timestamp });
+        }
+
+        await socket.join(roomCode);
+
+        const mergedRoom = mergeConnectionStatus(updatedRoom, gameRoom);
+        io.to(roomCode).emit('room:state', { room: mergedRoom });
+        callback({ ok: true, data: { room: mergedRoom } });
       });
-      registry.trackUser(socket.userId, roomCode);
-
-      await socket.join(roomCode);
-
-      // Notify existing players
-      socket.to(roomCode).emit('player:joined', {
-        player: {
-          userId: socket.userId,
-          displayName: user.displayName,
-          avatarUrl: user.avatarUrl,
-          color,
-          corner,
-          isConnected: true,
-        },
-      });
-
-      const updatedRoom = await getRoomByCode(roomCode);
-      if (!updatedRoom) throw new Error('Room not found after join');
-
-      // Sync full room state to joining player
-      socket.emit('room:state', { room: updatedRoom });
-
-      // Replay chat history to newly joined player
-      const history = await getRoomMessages(updatedRoom.id);
-      for (const msg of history) {
-        socket.emit('chat:message', {
-          senderId: msg.senderId,
-          displayName: msg.displayName,
-          message: msg.message,
-          timestamp: msg.timestamp,
-        });
-      }
-
-      callback({ ok: true, data: { room: updatedRoom } });
     } catch (err) {
-      console.error('room:join error:', err);
+      console.error('[room:join] Failed to join room', err);
       callback({ ok: false, error: 'Failed to join room' });
     }
   });

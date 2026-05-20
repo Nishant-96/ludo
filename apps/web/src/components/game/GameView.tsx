@@ -25,7 +25,6 @@ export const GameView: FC<GameViewProps> = ({ room, gameState, currentUserId }) 
   const selectablePawnIndices =
     isMyTurn && gameState.lastDiceValue !== null ? gameState.validMoves : [];
 
-  // Single move handler — both Board click and GameControls button use this
   const handlePawnSelect = useCallback(
     (pawnIndex: PawnIndex): void => {
       if (!selectablePawnIndices.includes(pawnIndex)) return;
@@ -59,7 +58,6 @@ export const GameView: FC<GameViewProps> = ({ room, gameState, currentUserId }) 
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      {/* Own socket reconnecting overlay */}
       {!isSocketConnected && (
         <div className="flex items-center justify-center gap-2 bg-red-900/90 px-4 py-2 text-center text-sm text-red-200">
           {isSocketReconnectFailed ? (
@@ -81,7 +79,6 @@ export const GameView: FC<GameViewProps> = ({ room, gameState, currentUserId }) 
         </div>
       )}
 
-      {/* Opponent disconnection banner with countdown */}
       {disconnectedPlayer && gameState.status === 'paused' && (
         <div className="bg-amber-900/80 px-4 py-2 text-center text-sm text-amber-200">
           <span className="font-semibold">{disconnectedPlayer.displayName}</span> disconnected
@@ -91,7 +88,6 @@ export const GameView: FC<GameViewProps> = ({ room, gameState, currentUserId }) 
         </div>
       )}
 
-      {/* Board */}
       <div className="flex flex-1 items-center justify-center p-4">
         <Board
           gameState={gameState}
@@ -101,7 +97,6 @@ export const GameView: FC<GameViewProps> = ({ room, gameState, currentUserId }) 
         />
       </div>
 
-      {/* Controls + Chat */}
       <div className="flex flex-col gap-2 border-t border-slate-800 p-4">
         <GameControls
           gameState={gameState}

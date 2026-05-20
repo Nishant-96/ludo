@@ -7,55 +7,32 @@ import { sounds } from '@/lib/sounds';
 import type { ServerToClientEvents } from '@ludo/shared';
 import { ENTRY_FEE } from '@/lib/constants';
 
-// Extract the handler type for a given server→client event
 type EventHandler<E extends keyof ServerToClientEvents> = ServerToClientEvents[E];
 
-// Register all global socket event listeners.
-// Call once at the app level after the socket is connected.
 export const useSocket = (): void => {
   const { setGameState, updateDiceResult, setDisconnectedPlayer, setMatchPayouts, setKilledPawnId, setReplayVoteState, setReplayCancelledReason } = useGameStore();
   const { setRoom, addPlayer, updatePlayerConnection, setSocketConnected, setSocketReconnectFailed, setGracePeriodRemaining } = useRoomStore();
   const { updateBalance } = useUserStore();
 
-  // Grace period countdown interval — kept in a ref so it survives re-renders
   const gracePeriodTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const killTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearGraceTimer = (): void => {
-    if (gracePeriodTimerRef.current) {
-      clearInterval(gracePeriodTimerRef.current);
-      gracePeriodTimerRef.current = null;
-    }
+    if (gracePeriodTimerRef.current) { clearInterval(gracePeriodTimerRef.current); gracePeriodTimerRef.current = null; }
   };
 
   useEffect(() => {
     let socket: ReturnType<typeof getSocket>;
+    try { socket = getSocket(); } catch { return; }
 
-    try {
-      socket = getSocket();
-    } catch {
-      // Socket not yet connected — will retry on next render
-      return;
-    }
-
-    // ── Server→Client handlers — explicitly typed, no `as any` ──
-
-    const onRoomState: EventHandler<'room:state'> = ({ room }) => {
-      setRoom(room);
-    };
-
-    const onGameState: EventHandler<'game:state'> = ({ gameState }) => {
-      setGameState(gameState);
-    };
-
-    const onPlayerJoined: EventHandler<'player:joined'> = ({ player }) => {
-      addPlayer(player);
-    };
+    const onRoomState: EventHandler<'room:state'> = ({ room }) => setRoom(room);
+    const onGameState: EventHandler<'game:state'> = ({ gameState }) => setGameState(gameState);
+    const onPlayerJoined: EventHandler<'player:joined'> = ({ player }) => addPlayer(player);
 
     const onPlayerDisconnected: EventHandler<'player:disconnected'> = ({ userId, gracePeriodSeconds }) => {
       updatePlayerConnection(userId, false);
       setDisconnectedPlayer(userId);
       sounds.play('disconnect');
-
       clearGraceTimer();
       setGracePeriodRemaining(gracePeriodSeconds);
       let remaining = gracePeriodSeconds;
@@ -87,8 +64,9 @@ export const useSocket = (): void => {
         const killedPlayer = gs?.players.find((p) => p.userId === kill.killedUserId);
         if (killedPlayer) {
           const pawnId = `${killedPlayer.color}-${kill.killedPawnIndex}`;
+          if (killTimeoutRef.current) clearTimeout(killTimeoutRef.current);
           setKilledPawnId(pawnId);
-          setTimeout(() => setKilledPawnId(null), 600);
+          killTimeoutRef.current = setTimeout(() => { setKilledPawnId(null); killTimeoutRef.current = null; }, 600);
         }
       }
     };
@@ -101,14 +79,8 @@ export const useSocket = (): void => {
       if (timeRemaining === 10) sounds.play('timerWarning');
     };
 
-    const onReplayPending: EventHandler<'game:replay:pending'> = ({ displayName, votes, required }) => {
-      setReplayVoteState({ votes, required, requestedByName: displayName });
-    };
-
-    const onReplayCancelled: EventHandler<'game:replay:cancelled'> = ({ reason }) => {
-      setReplayCancelledReason(reason);
-      setReplayVoteState(null);
-    };
+    const onReplayPending: EventHandler<'game:replay:pending'> = ({ displayName, votes, required }) => setReplayVoteState({ votes, required, requestedByName: displayName });
+    const onReplayCancelled: EventHandler<'game:replay:cancelled'> = ({ reason }) => { setReplayCancelledReason(reason); setReplayVoteState(null); };
 
     const onGameOver: EventHandler<'game:over'> = ({ result }) => {
       useGameStore.setState((state) => {
@@ -118,28 +90,16 @@ export const useSocket = (): void => {
       setMatchPayouts(result.payouts);
       clearGraceTimer();
       setGracePeriodRemaining(null);
-      // Reconcile local wallet balance.
-      // The server has already deducted the entry fee and paid the winner.
-      // Winners: balance += payout (net positive after entry fee was deducted at game start)
-      // Losers:  balance -= ENTRY_FEE (fee was deducted at game start; no payout)
       const { user, balance } = useUserStore.getState();
       if (user) {
         const payout = result.payouts[user.id] ?? 0;
-        if (payout > 0) {
-          updateBalance(balance + payout);
-        } else {
-          updateBalance(Math.max(0, balance - ENTRY_FEE));
-        }
+        updateBalance(payout > 0 ? balance + payout : Math.max(0, balance - ENTRY_FEE));
       }
       sounds.play('winner');
     };
 
-    // Track own socket connectivity for reconnecting overlay
     const handleDisconnect = (): void => setSocketConnected(false);
-    const handleConnect = (): void => {
-      setSocketConnected(true);
-      setSocketReconnectFailed(false);
-    };
+    const handleConnect = (): void => { setSocketConnected(true); setSocketReconnectFailed(false); };
     const handleReconnectFailed = (): void => setSocketReconnectFailed(true);
 
     socket.on('room:state', onRoomState);
@@ -172,6 +132,7 @@ export const useSocket = (): void => {
       socket.off('disconnect', handleDisconnect);
       socket.off('connect', handleConnect);
       socket.io.off('reconnect_failed', handleReconnectFailed);
+      if (killTimeoutRef.current) clearTimeout(killTimeoutRef.current);
       clearGraceTimer();
     };
   }, [setGameState, updateDiceResult, setDisconnectedPlayer, setMatchPayouts, setKilledPawnId, setReplayVoteState, setReplayCancelledReason, setRoom, addPlayer, updatePlayerConnection, setSocketConnected, setSocketReconnectFailed, setGracePeriodRemaining, updateBalance]);

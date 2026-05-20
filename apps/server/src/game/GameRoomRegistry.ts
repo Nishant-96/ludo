@@ -4,46 +4,37 @@ import { GameRoom } from './GameRoom';
 export class GameRoomRegistry {
   private static instance: GameRoomRegistry;
   private rooms = new Map<string, GameRoom>();
-  // Map userId → roomCode for quick disconnect lookup
   private userRoomMap = new Map<string, string>();
-  // Map roomCode → Set of userIds who voted 'yes' for replay
   private replayVotes = new Map<string, Set<string>>();
+  private joinLocks = new Map<string, Promise<void>>();
 
   static getInstance(): GameRoomRegistry {
-    if (!GameRoomRegistry.instance) {
-      GameRoomRegistry.instance = new GameRoomRegistry();
-    }
+    if (!GameRoomRegistry.instance) GameRoomRegistry.instance = new GameRoomRegistry();
     return GameRoomRegistry.instance;
   }
 
-  get(roomCode: string): GameRoom | undefined {
-    return this.rooms.get(roomCode);
-  }
+  get(roomCode: string): GameRoom | undefined { return this.rooms.get(roomCode); }
+  create(roomCode: string): GameRoom { const room = new GameRoom(roomCode); this.rooms.set(roomCode, room); return room; }
+  getOrCreate(roomCode: string): GameRoom { return this.rooms.get(roomCode) ?? this.create(roomCode); }
+  delete(roomCode: string): void { this.rooms.delete(roomCode); }
+  trackUser(userId: string, roomCode: string): void { this.userRoomMap.set(userId, roomCode); }
+  untrackUser(userId: string): void { this.userRoomMap.delete(userId); }
+  getRoomCodeForUser(userId: string): string | undefined { return this.userRoomMap.get(userId); }
 
-  create(roomCode: string): GameRoom {
-    const room = new GameRoom(roomCode);
-    this.rooms.set(roomCode, room);
-    return room;
-  }
-
-  getOrCreate(roomCode: string): GameRoom {
-    return this.rooms.get(roomCode) ?? this.create(roomCode);
-  }
-
-  delete(roomCode: string): void {
-    this.rooms.delete(roomCode);
-  }
-
-  trackUser(userId: string, roomCode: string): void {
-    this.userRoomMap.set(userId, roomCode);
-  }
-
-  untrackUser(userId: string): void {
-    this.userRoomMap.delete(userId);
-  }
-
-  getRoomCodeForUser(userId: string): string | undefined {
-    return this.userRoomMap.get(userId);
+  // Serializes concurrent joins per room to prevent TOCTOU capacity races.
+  async withJoinLock<T>(roomCode: string, fn: () => Promise<T>): Promise<T> {
+    while (this.joinLocks.has(roomCode)) {
+      await this.joinLocks.get(roomCode);
+    }
+    let releaseLock!: () => void;
+    const lockPromise = new Promise<void>((resolve) => { releaseLock = resolve; });
+    this.joinLocks.set(roomCode, lockPromise);
+    try {
+      return await fn();
+    } finally {
+      this.joinLocks.delete(roomCode);
+      releaseLock();
+    }
   }
 
   getOrCreateReplayVotes(roomCode: string): Set<string> {
@@ -54,17 +45,15 @@ export class GameRoomRegistry {
     return votes;
   }
 
-  clearReplayVotes(roomCode: string): void {
-    this.replayVotes.delete(roomCode);
-  }
+  clearReplayVotes(roomCode: string): void { this.replayVotes.delete(roomCode); }
 
   handleDisconnect(io: AppServer, userId: string): void {
     const roomCode = this.userRoomMap.get(userId);
     if (!roomCode) return;
-
     const room = this.rooms.get(roomCode);
     if (!room) return;
-
+    const votes = this.replayVotes.get(roomCode);
+    if (votes) votes.delete(userId);
     room.handlePlayerDisconnect(io, userId);
   }
 }

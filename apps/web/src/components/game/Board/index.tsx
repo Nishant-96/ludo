@@ -27,14 +27,12 @@ export const Board: FC<BoardProps> = ({
       className="w-full max-w-[min(100vw,60vh)] touch-none select-none"
       aria-label="Ludo board"
     >
-      {/* Board cells */}
       {Array.from({ length: GRID }, (_, row) =>
         Array.from({ length: GRID }, (_, col) => (
           <BoardCell key={`${col}-${row}`} col={col} row={row} />
         ))
       )}
 
-      {/* Pawns — rendered on top of cells */}
       {gameState.players.flatMap((player) =>
         player.pawns.map((pawn) => {
           const { x, y } = positionToSVG(player.color, pawn.position, pawn.index);

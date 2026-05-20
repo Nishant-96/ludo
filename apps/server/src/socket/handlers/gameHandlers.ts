@@ -4,15 +4,10 @@ import { LudoEngine } from '../../game/LudoEngine';
 import { GameRoom } from '../../game/GameRoom';
 import { deductEntryFees, payoutWinner } from '../../db/queries/wallets';
 import { createMatch, recordMove, endMatch, deleteMatch } from '../../db/queries/matches';
-import { updateRoomStatus } from '../../db/queries/rooms';
+import { updateRoomStatus, getRoomByCode } from '../../db/queries/rooms';
 import { getLeaderboard } from '../../db/queries/chats';
 
-const ENTRY_FEE = 100;
 const TURN_DURATION_SECONDS = GameRoom.TURN_DURATION_SECONDS;
-
-// 80% of pool goes to winner, 20% is platform fee
-const calcPayout = (playerCount: number): number =>
-  Math.floor(playerCount * ENTRY_FEE * 0.8);
 
 export const registerGameHandlers = (
   io: AppServer,
@@ -20,53 +15,73 @@ export const registerGameHandlers = (
   registry: GameRoomRegistry
 ): void => {
   socket.on('game:start', async ({ roomCode }, callback) => {
+    const gameRoom = registry.get(roomCode);
     try {
-      const gameRoom = registry.get(roomCode);
       if (!gameRoom) {
         callback({ ok: false, error: 'Room not found' });
         return;
       }
 
-      if (gameRoom.gameState !== null) {
+      // guards against double game:start from concurrent clicks
+      if (gameRoom.gameState !== null || gameRoom.isStarting) {
         callback({ ok: false, error: 'Game already started' });
         return;
       }
+      gameRoom.isStarting = true;
 
-      // Only the room host (first connected player) may start the game
-      const host = gameRoom.players.find((p) => p.isConnected);
-      if (host?.userId !== socket.userId) {
+      if (gameRoom.createdBy !== socket.userId) {
+        gameRoom.isStarting = false;
         callback({ ok: false, error: 'Only the host can start the game' });
         return;
       }
 
-      if (gameRoom.players.length < 2) {
-        callback({ ok: false, error: 'At least 2 players are required to start' });
+      if (!gameRoom.roomId) {
+        gameRoom.isStarting = false;
+        callback({ ok: false, error: 'Room ID not found' });
         return;
       }
 
-      if (!gameRoom.roomId) {
-        callback({ ok: false, error: 'Room ID not found' });
+      // Sync DB players into memory — guards stale in-memory state before the count check.
+      const dbRoom = await getRoomByCode(gameRoom.roomCode);
+      if (dbRoom) {
+        for (const p of dbRoom.players) {
+          if (!gameRoom.getPlayer(p.userId)) {
+            gameRoom.addPlayer({
+              userId: p.userId,
+              displayName: p.displayName,
+              color: p.color,
+              corner: p.corner,
+              socketId: '',
+              isConnected: false,
+              isForfeited: false,
+            });
+          }
+        }
+      }
+
+      if (gameRoom.players.length < 2) {
+        gameRoom.isStarting = false;
+        callback({ ok: false, error: 'At least 2 players are required to start' });
         return;
       }
 
       const playerIds = gameRoom.players.map((p) => p.userId);
       const colors = gameRoom.players.map((p) => p.color);
 
-      // Create match record, then deduct fees. Fee deduction can fail if a player's
-      // balance dropped between joining and the host clicking Start. On failure, roll
-      // back the match rows so the DB stays clean — no dangling orphaned records.
+      // Deduct fees after match creation; roll back on failure to avoid orphaned records.
       const matchId = await createMatch(gameRoom.roomId, playerIds, colors);
       try {
-        await deductEntryFees(playerIds, ENTRY_FEE, matchId);
+        await deductEntryFees(playerIds, GameRoom.ENTRY_FEE, matchId);
       } catch (feeErr) {
+        gameRoom.isStarting = false;
         await deleteMatch(matchId).catch(() => null);
         throw feeErr;
       }
 
-      // Close room to new joiners
       await updateRoomStatus(gameRoom.roomId, 'active');
 
       gameRoom.initGameState(matchId);
+      gameRoom.isStarting = false;
       const gs = gameRoom.gameState!;
       io.to(roomCode).emit('game:state', { gameState: gs });
       io.to(roomCode).emit('turn:changed', {
@@ -74,13 +89,46 @@ export const registerGameHandlers = (
         timeRemaining: TURN_DURATION_SECONDS,
       });
 
-      // Start server-side turn timer
       gameRoom.startTurnTimer(io, () => handleTimerExpiry(io, socket, registry, roomCode));
 
       callback({ ok: true, data: null });
     } catch (err) {
-      console.error('game:start error:', err);
+      if (gameRoom) gameRoom.isStarting = false;
+      console.error('[game:start] Failed to start game', err);
       callback({ ok: false, error: 'Failed to start game' });
+    }
+  });
+
+  socket.on('game:forfeit', async ({ roomCode }, callback) => {
+    try {
+      const gameRoom = registry.get(roomCode);
+      if (!gameRoom?.gameState) {
+        callback({ ok: false, error: 'No active game' });
+        return;
+      }
+
+      if (gameRoom.gameState.status !== 'active' && gameRoom.gameState.status !== 'paused') {
+        callback({ ok: false, error: 'Game is not in progress' });
+        return;
+      }
+
+      const player = gameRoom.getPlayer(socket.userId);
+      if (!player) {
+        callback({ ok: false, error: 'Player not in room' });
+        return;
+      }
+
+      if (player.isForfeited) {
+        callback({ ok: false, error: 'Already forfeited' });
+        return;
+      }
+
+      gameRoom.forfeitPlayer(io, socket.userId);
+
+      callback({ ok: true, data: null });
+    } catch (err) {
+      console.error('[game:forfeit] Failed to forfeit', err);
+      callback({ ok: false, error: 'Failed to forfeit' });
     }
   });
 
@@ -127,7 +175,7 @@ export const registerGameHandlers = (
         validMoves,
       });
 
-      // If no valid moves — auto-advance turn (unless 6 was rolled with no moves, still no move)
+      // No valid moves — auto-advance regardless of dice value
       if (validMoves.length === 0) {
         gameRoom.clearTurnTimer();
         gameRoom.advanceTurnWithTimer(io);
@@ -135,7 +183,7 @@ export const registerGameHandlers = (
 
       callback({ ok: true, data: null });
     } catch (err) {
-      console.error('dice:roll error:', err);
+      console.error('[dice:roll] Failed to roll dice', err);
       callback({ ok: false, error: 'Failed to roll dice' });
     }
   });
@@ -182,10 +230,8 @@ export const registerGameHandlers = (
 
       const result = LudoEngine.applyMove(playerState, gameState.players, pawnIndex, diceValue);
 
-      // Update pawn in game state
       playerState.pawns[pawnIndex] = result.updatedPawn;
 
-      // Handle kill — send opponent pawn to base
       if (result.kill) {
         const killedPlayer = gameState.players.find((p) => p.userId === result.kill!.killedUserId);
         if (killedPlayer) {
@@ -195,7 +241,7 @@ export const registerGameHandlers = (
         }
       }
 
-      // Persist move (non-blocking — don't await in critical path)
+      // Non-blocking — don't await in the critical path
       if (gameRoom.matchId) {
         recordMove({
           matchId: gameRoom.matchId,
@@ -204,7 +250,7 @@ export const registerGameHandlers = (
           pawnIndex,
           fromPos,
           toPos: result.updatedPawn.position,
-        }).catch((err) => console.error('recordMove failed:', err));
+        }).catch(() => null);
       }
 
       io.to(roomCode).emit('pawn:moved', {
@@ -215,7 +261,6 @@ export const registerGameHandlers = (
         reachedHome: result.reachedHome,
       });
 
-      // Check win
       if (LudoEngine.checkWin(playerState)) {
         await handleGameOver(io, gameRoom, roomCode, socket.userId, registry);
         callback({ ok: true, data: null });
@@ -224,11 +269,12 @@ export const registerGameHandlers = (
 
       gameRoom.clearTurnTimer();
 
-      // Rolling a 6 grants an extra turn (unless the player just won)
       if (LudoEngine.grantsExtraTurn(diceValue)) {
         gameState.lastDiceValue = null;
         gameState.validMoves = [];
         gameState.timeRemaining = TURN_DURATION_SECONDS;
+        // Full state before turn:changed so clients see cleared dice/validMoves
+        io.to(roomCode).emit('game:state', { gameState });
         io.to(roomCode).emit('turn:changed', {
           playerId: socket.userId,
           timeRemaining: TURN_DURATION_SECONDS,
@@ -240,15 +286,10 @@ export const registerGameHandlers = (
 
       callback({ ok: true, data: null });
     } catch (err) {
-      console.error('move:pawn error:', err);
+      console.error('[move:pawn] Failed to apply move', err);
       callback({ ok: false, error: 'Failed to apply move' });
     }
   });
-
-  // ─── Replay consent flow ────────────────────────────────────────────────────
-  // Requires all active (non-forfeited) players to vote 'yes' before replay starts.
-  // 'no' vote cancels the replay; voter leaves (they can rejoin later as a new player).
-  // Votes are tracked in a per-room Map on the registry; cleared on replay or cancel.
 
   socket.on('game:replay:vote', async ({ roomCode, vote }, callback) => {
     try {
@@ -271,8 +312,7 @@ export const registerGameHandlers = (
       }
 
       if (vote === 'no') {
-        // Cancel replay — inform everyone, remove the voter from room players,
-        // and evict them from the Socket.IO room so they stop receiving game events.
+        // Evict voter from socket room so they stop receiving game events
         gameRoom.removePlayer(socket.userId);
         registry.untrackUser(socket.userId);
         socket.leave(roomCode);
@@ -283,14 +323,12 @@ export const registerGameHandlers = (
         return;
       }
 
-      // Record 'yes' vote in registry
       const votes = registry.getOrCreateReplayVotes(roomCode);
       votes.add(socket.userId);
 
       const required = activePlayers.length;
       const currentVotes = votes.size;
 
-      // Broadcast current vote tally
       io.to(roomCode).emit('game:replay:pending', {
         requestedBy: socket.userId,
         displayName: votingPlayer.displayName,
@@ -303,7 +341,6 @@ export const registerGameHandlers = (
         return;
       }
 
-      // All players voted yes — start replay
       registry.clearReplayVotes(roomCode);
 
       if (!gameRoom.roomId) {
@@ -315,7 +352,7 @@ export const registerGameHandlers = (
       const colors = gameRoom.players.map((p) => p.color);
 
       const matchId = await createMatch(gameRoom.roomId, playerIds, colors);
-      await deductEntryFees(playerIds, ENTRY_FEE, matchId);
+      await deductEntryFees(playerIds, GameRoom.ENTRY_FEE, matchId);
 
       gameRoom.gameState = null;
       gameRoom.matchId = null;
@@ -333,12 +370,11 @@ export const registerGameHandlers = (
 
       callback({ ok: true, data: null });
     } catch (err) {
-      console.error('game:replay:vote error:', err);
+      console.error('[game:replay:vote] Failed to process replay vote', err);
       callback({ ok: false, error: 'Failed to process replay vote' });
     }
   });
 
-  // Keep game:replay for direct replay (host-only, single player case)
   socket.on('game:replay', async ({ roomCode }, callback) => {
     try {
       const gameRoom = registry.get(roomCode);
@@ -353,12 +389,10 @@ export const registerGameHandlers = (
       }
 
       if (gameRoom.players.length > 1) {
-        // Multi-player: use the consent flow instead
         callback({ ok: false, error: 'Use game:replay:vote for multiplayer replay' });
         return;
       }
 
-      // Single player replay (edge case)
       if (!gameRoom.roomId) {
         callback({ ok: false, error: 'Room ID not found' });
         return;
@@ -368,7 +402,7 @@ export const registerGameHandlers = (
       const colors = gameRoom.players.map((p) => p.color);
 
       const matchId = await createMatch(gameRoom.roomId, playerIds, colors);
-      await deductEntryFees(playerIds, ENTRY_FEE, matchId);
+      await deductEntryFees(playerIds, GameRoom.ENTRY_FEE, matchId);
 
       gameRoom.gameState = null;
       gameRoom.matchId = null;
@@ -386,13 +420,11 @@ export const registerGameHandlers = (
 
       callback({ ok: true, data: null });
     } catch (err) {
-      console.error('game:replay error:', err);
+      console.error('[game:replay] Failed to start replay', err);
       callback({ ok: false, error: 'Failed to start replay' });
     }
   });
 };
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const handleTimerExpiry = (
   io: AppServer,
@@ -402,8 +434,6 @@ const handleTimerExpiry = (
 ): void => {
   const gameRoom = registry.get(roomCode);
   if (!gameRoom) return;
-  // clearTurnTimer is a no-op if the timer already fired, but guards against
-  // a race where expiry fires and then a move is played in the same tick.
   gameRoom.clearTurnTimer();
   gameRoom.advanceTurnWithTimer(io);
 };
@@ -424,7 +454,7 @@ const handleGameOver = async (
   gameState.winnerId = winnerId;
 
   const playerCount = gameRoom.players.length;
-  const winnerPayout = calcPayout(playerCount);
+  const winnerPayout = GameRoom.calcPayout(playerCount);
 
   await Promise.all([
     endMatch(matchId, winnerId),
@@ -442,12 +472,10 @@ const handleGameOver = async (
     },
   });
 
-  // Broadcast updated leaderboard to all connected clients
   getLeaderboard().then((entries) => {
     io.emit('leaderboard:update', { entries });
-  }).catch((err) => console.error('leaderboard:update error:', err));
+  }).catch(() => null);
 
-  // Clean up: release memory for completed room and untrack all players
   gameRoom.players.forEach((p) => registry.untrackUser(p.userId));
   gameRoom.cleanup();
   registry.delete(roomCode);

@@ -1,12 +1,11 @@
 import type { PlayerColor } from './user';
 
-// -1 = in base, 0-51 = on main track, 52-57 = in home column, 58 = home
-export type BoardPosition = number;
+export type BoardPosition = number; // -1 = base, 0-51 = main track, 52-57 = home column, 58 = home
 
 export type PawnIndex = 0 | 1 | 2 | 3;
 
 export interface Pawn {
-  id: string; // e.g. "red-0", "blue-2"
+  id: string; // e.g. "red-0"
   color: PlayerColor;
   index: PawnIndex;
   position: BoardPosition;
@@ -31,10 +30,10 @@ export interface GameState {
   status: GameStatus;
   players: PlayerGameState[];
   currentTurnUserId: string;
-  turnOrder: string[]; // ordered list of userIds
+  turnOrder: string[];
   timeRemaining: number;
   lastDiceValue: number | null;
-  validMoves: PawnIndex[]; // pawn indices that can move
+  validMoves: PawnIndex[];
   winnerId: string | null;
 }
 
@@ -46,5 +45,5 @@ export interface KillEvent {
 export interface MatchResult {
   winnerId: string;
   winnerDisplayName: string;
-  payouts: Record<string, number>; // userId -> coins received
+  payouts: Record<string, number>; // userId → coins received
 }

@@ -2,8 +2,7 @@ import { Howl, Howler } from 'howler';
 
 type SoundName = 'dice' | 'move' | 'kill' | 'home' | 'winner' | 'timerWarning' | 'disconnect' | 'chat';
 
-// All sound files are served from Supabase Storage.
-// Paths are set via environment variable so they can point to the deployed bucket URL.
+// Falls back to /sounds for local dev; production points to Supabase Storage bucket
 const SOUNDS_BASE = import.meta.env.VITE_SOUNDS_URL || '/sounds';
 
 const registry: Partial<Record<SoundName, Howl>> = {};

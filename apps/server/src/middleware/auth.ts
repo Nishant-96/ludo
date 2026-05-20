@@ -34,7 +34,7 @@ export const requireAuth = async (
   next();
 };
 
-// Verify a Supabase JWT and return the user ID — used in Socket.IO handshake
+// Used in Socket.IO handshake auth
 export const verifyToken = async (token: string): Promise<string | null> => {
   const { data, error } = await supabase.auth.getUser(token);
   if (error || !data.user) return null;

@@ -33,7 +33,7 @@ export const Button: FC<ButtonProps> = ({
     className={`
       inline-flex items-center justify-center gap-2 rounded-xl font-medium
       transition-colors focus-visible:outline-none focus-visible:ring-2
-      focus-visible:ring-indigo-500 disabled:cursor-not-allowed
+      focus-visible:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-50
       ${VARIANT_CLASSES[variant]} ${SIZE_CLASSES[size]} ${className}
     `}
     {...props}

@@ -37,7 +37,7 @@ export const Timer: FC<TimerProps> = ({ timeRemaining, totalSeconds = 30 }) => {
         animate={{ color: isWarning ? '#F87171' : '#e2e8f0' }}
         className="relative text-sm font-bold tabular-nums"
       >
-        {timeRemaining}
+        {Math.max(0, timeRemaining)}
       </motion.span>
     </div>
   );

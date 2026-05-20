@@ -1,8 +1,6 @@
 import type { Room, RoomPlayer, RoomSummary } from "./room";
 import type { GameState, KillEvent, MatchResult, PawnIndex } from "./game";
 
-// ─── Client → Server ─────────────────────────────────────────────────────────
-
 export interface ClientToServerEvents {
   "room:create": (
     payload: { capacity: 2 | 3 | 4 },
@@ -36,9 +34,11 @@ export interface ClientToServerEvents {
     payload: { roomCode: string; vote: "yes" | "no" },
     callback: (res: SocketResponse<null>) => void,
   ) => void;
+  "game:forfeit": (
+    payload: { roomCode: string },
+    callback: (res: SocketResponse<null>) => void,
+  ) => void;
 }
-
-// ─── Server → Client ─────────────────────────────────────────────────────────
 
 export interface ServerToClientEvents {
   "room:state": (payload: { room: Room }) => void;
@@ -84,8 +84,6 @@ export interface ServerToClientEvents {
   "lobby:rooms": (payload: { rooms: RoomSummary[] }) => void;
   error: (payload: { code: string; message: string }) => void;
 }
-
-// ─── Shared ───────────────────────────────────────────────────────────────────
 
 export interface SocketResponse<T> {
   ok: boolean;

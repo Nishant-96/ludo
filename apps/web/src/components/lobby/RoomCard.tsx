@@ -12,18 +12,20 @@ interface RoomCardProps {
 
 export const RoomCard: FC<RoomCardProps> = ({ room }) => {
   const navigate = useNavigate();
-  const { balance } = useUserStore();
+  const { user, balance } = useUserStore();
+  const isAlreadyIn = user ? room.participantIds.includes(user.id) : false;
   const isFull = room.playerCount >= room.capacity;
   const canAfford = balance >= ENTRY_FEE;
-  const isDisabled = isFull || !canAfford;
+  const isDisabled = !isAlreadyIn && (isFull || !canAfford);
 
   return (
     <div className="flex items-center justify-between rounded-xl bg-slate-800 px-4 py-3">
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm font-medium text-white">{room.code}</span>
-          {isFull && <Badge variant="warning">Full</Badge>}
-          {!isFull && !canAfford && (
+          {isAlreadyIn && <Badge variant="info">Your room</Badge>}
+          {!isAlreadyIn && isFull && <Badge variant="warning">Full</Badge>}
+          {!isAlreadyIn && !isFull && !canAfford && (
             <Badge variant="danger">Insufficient coins</Badge>
           )}
         </div>
@@ -37,7 +39,7 @@ export const RoomCard: FC<RoomCardProps> = ({ room }) => {
         disabled={isDisabled}
         onClick={() => navigate(`/room/${room.code}`)}
       >
-        Join
+        {isAlreadyIn ? 'Rejoin' : isFull ? 'Full' : !canAfford ? 'No coins' : 'Join'}
       </Button>
     </div>
   );

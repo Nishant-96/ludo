@@ -68,22 +68,25 @@ export const getRoomByCode = async (code: string): Promise<Room | null> => {
 export const getOpenRooms = async (): Promise<RoomSummary[]> => {
   const { data, error } = await db
     .from('rooms')
-    .select('id, code, capacity, status, created_at, room_players(count)')
+    .select('id, code, capacity, status, created_at, room_players(user_id)')
     .eq('status', 'waiting')
     .order('created_at', { ascending: false })
     .limit(20);
 
   if (error || !data) return [];
 
-  return data.map((r: Record<string, unknown>) => ({
-    id: r.id as string,
-    code: r.code as string,
-    capacity: r.capacity as RoomCapacity,
-    status: r.status as RoomStatus,
-    // Supabase aggregate `room_players(count)` returns [{ count: number }]
-    playerCount: ((r.room_players as Array<{ count: number }>)[0]?.count ?? 0),
-    createdAt: r.created_at as string,
-  }));
+  return data.map((r: Record<string, unknown>) => {
+    const players = (r.room_players as Array<{ user_id: string }>) ?? [];
+    return {
+      id: r.id as string,
+      code: r.code as string,
+      capacity: r.capacity as RoomCapacity,
+      status: r.status as RoomStatus,
+      playerCount: players.length,
+      participantIds: players.map((p) => p.user_id),
+      createdAt: r.created_at as string,
+    };
+  });
 };
 
 export const updateRoomStatus = async (roomId: string, status: RoomStatus): Promise<void> => {

@@ -8,9 +8,7 @@ import { getLeaderboard } from '../db/queries/chats';
 const TURN_DURATION_SECONDS = 30;
 const RECONNECT_GRACE_SECONDS = 60;
 const ENTRY_FEE = 100;
-// 80% of pool goes to winner; mirrors calcPayout in gameHandlers
-const calcForfeitPayout = (playerCount: number): number =>
-  Math.floor(playerCount * ENTRY_FEE * 0.8);
+const PAYOUT_MULTIPLIER = 0.8;
 
 export interface GameRoomPlayer {
   userId: string;
@@ -24,10 +22,12 @@ export interface GameRoomPlayer {
 
 export class GameRoom {
   readonly roomCode: string;
-  roomId: string | null = null; // DB UUID — set when room is created/joined
+  roomId: string | null = null;
+  createdBy: string | null = null;
   players: GameRoomPlayer[] = [];
   matchId: string | null = null;
   gameState: GameState | null = null;
+  isStarting = false;
 
   private turnTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -39,7 +39,6 @@ export class GameRoom {
   addPlayer(player: GameRoomPlayer): void {
     const existing = this.players.findIndex((p) => p.userId === player.userId);
     if (existing >= 0) {
-      // Reconnect — update socket ID
       this.players[existing].socketId = player.socketId;
       this.players[existing].isConnected = true;
     } else {
@@ -88,17 +87,13 @@ export class GameRoom {
 
   startTurnTimer(io: AppServer, onExpire: () => void): void {
     this.clearTurnTimer();
-
     if (!this.gameState) return;
 
     this.gameState.timeRemaining = TURN_DURATION_SECONDS;
-
     this.turnTimer = setInterval(() => {
       if (!this.gameState) return;
-
       this.gameState.timeRemaining -= 1;
       io.to(this.roomCode).emit('timer:tick', { timeRemaining: this.gameState.timeRemaining });
-
       if (this.gameState.timeRemaining <= 0) {
         this.clearTurnTimer();
         onExpire();
@@ -131,16 +126,12 @@ export class GameRoom {
     return this.gameState.currentTurnUserId;
   }
 
-  // Shared helper: advance turn, broadcast, and restart the server-side timer.
-  // Used by forfeitPlayer and handlePlayerReconnect to avoid logic duplication.
   advanceTurnWithTimer(io: AppServer): void {
     const nextId = this.advanceTurn();
     if (!this.gameState) return;
     this.gameState.status = 'active';
-    io.to(this.roomCode).emit('turn:changed', {
-      playerId: nextId,
-      timeRemaining: TURN_DURATION_SECONDS,
-    });
+    io.to(this.roomCode).emit('game:state', { gameState: this.gameState });
+    io.to(this.roomCode).emit('turn:changed', { playerId: nextId, timeRemaining: TURN_DURATION_SECONDS });
     this.startTurnTimer(io, () => this.advanceTurnWithTimer(io));
   }
 
@@ -155,37 +146,20 @@ export class GameRoom {
       if (playerState) playerState.isConnected = false;
 
       this.gameState.status = 'paused';
-      // Pause the turn timer while the game is suspended — prevents auto-advancing
-      // turns for a room with no connected players. Restarted on reconnect.
       this.clearTurnTimer();
+      io.to(this.roomCode).emit('player:disconnected', { userId, gracePeriodSeconds: RECONNECT_GRACE_SECONDS });
 
-      io.to(this.roomCode).emit('player:disconnected', {
-        userId,
-        gracePeriodSeconds: RECONNECT_GRACE_SECONDS,
-      });
+      const timer = setTimeout(() => this.forfeitPlayer(io, userId), RECONNECT_GRACE_SECONDS * 1000);
+      this.reconnectTimers.set(userId, timer);
     }
-
-    // Always start forfeit grace period regardless of remaining connected count
-    const timer = setTimeout(() => {
-      this.forfeitPlayer(io, userId);
-    }, RECONNECT_GRACE_SECONDS * 1000);
-
-    this.reconnectTimers.set(userId, timer);
   }
 
   handlePlayerReconnect(io: AppServer, userId: string, socketId: string): void {
-    // Cancel grace period timer
     const timer = this.reconnectTimers.get(userId);
-    if (timer) {
-      clearTimeout(timer);
-      this.reconnectTimers.delete(userId);
-    }
+    if (timer) { clearTimeout(timer); this.reconnectTimers.delete(userId); }
 
     const player = this.getPlayer(userId);
-    if (player) {
-      player.isConnected = true;
-      player.socketId = socketId;
-    }
+    if (player) { player.isConnected = true; player.socketId = socketId; }
 
     if (this.gameState) {
       const playerState = this.gameState.players.find((p) => p.userId === userId);
@@ -194,19 +168,17 @@ export class GameRoom {
       io.to(this.roomCode).emit('player:reconnected', { userId });
       io.to(this.roomCode).emit('game:state', { gameState: this.gameState });
 
-      const allConnected = this.players
-        .filter((p) => !p.isForfeited)
-        .every((p) => p.isConnected);
+      if (player?.isForfeited) return; // observer only — no turn timer restart
 
+      const allConnected = this.players.filter((p) => !p.isForfeited).every((p) => p.isConnected);
       if (allConnected) {
-        // Resume the turn timer that was paused on disconnect.
         this.gameState.status = 'active';
         this.startTurnTimer(io, () => this.advanceTurnWithTimer(io));
       }
     }
   }
 
-  private forfeitPlayer(io: AppServer, userId: string): void {
+  forfeitPlayer(io: AppServer, userId: string): void {
     if (!this.gameState) return;
 
     const playerState = this.gameState.players.find((p) => p.userId === userId);
@@ -218,51 +190,32 @@ export class GameRoom {
     const activePlayers = this.gameState.players.filter((p) => !p.isForfeited);
 
     if (activePlayers.length === 1) {
-      // Only one player left — they win by forfeit
       const winner = activePlayers[0];
       this.gameState.status = 'completed';
       this.gameState.winnerId = winner.userId;
       this.clearTurnTimer();
 
-      const winnerId = winner.userId;
-      const playerCount = this.players.length;
-      const winnerPayout = calcForfeitPayout(playerCount);
+      const { userId: winnerId, displayName } = winner;
+      const winnerPayout = GameRoom.calcPayout(this.players.length);
       const matchId = this.matchId;
 
-      // Persist result and pay out winner, then broadcast game:over
-      Promise.all([
-        matchId ? endMatch(matchId, winnerId) : Promise.resolve(),
-        payoutWinner(winnerId, winnerPayout, matchId ?? ''),
-      ])
+      if (!matchId) {
+        io.to(this.roomCode).emit('game:over', { result: { winnerId, winnerDisplayName: displayName, payouts: {} } });
+        return;
+      }
+
+      Promise.all([endMatch(matchId, winnerId), payoutWinner(winnerId, winnerPayout, matchId)])
         .then(() => {
-          io.to(this.roomCode).emit('game:over', {
-            result: {
-              winnerId,
-              winnerDisplayName: winner.displayName,
-              payouts: { [winnerId]: winnerPayout },
-            },
-          });
-          // Broadcast updated leaderboard to all connected clients
-          getLeaderboard().then((entries) => {
-            io.emit('leaderboard:update', { entries });
-          }).catch((err) => console.error('leaderboard:update (forfeit) error:', err));
+          io.to(this.roomCode).emit('game:over', { result: { winnerId, winnerDisplayName: displayName, payouts: { [winnerId]: winnerPayout } } });
+          getLeaderboard().then((entries) => io.emit('leaderboard:update', { entries })).catch(() => null);
         })
-        .catch((err) => {
-          console.error('forfeit payout failed:', err);
-          // Still broadcast game:over so clients aren't stuck
-          io.to(this.roomCode).emit('game:over', {
-            result: {
-              winnerId,
-              winnerDisplayName: winner.displayName,
-              payouts: { [winnerId]: 0 },
-            },
-          });
+        .catch(() => {
+          io.to(this.roomCode).emit('game:over', { result: { winnerId, winnerDisplayName: displayName, payouts: { [winnerId]: 0 } } });
         });
 
       return;
     }
 
-    // More than 1 active player remains — advance turn and restart timer
     if (this.gameState.currentTurnUserId === userId) {
       io.to(this.roomCode).emit('game:state', { gameState: this.gameState });
       this.advanceTurnWithTimer(io);
@@ -280,6 +233,10 @@ export class GameRoom {
     this.clearTurnTimer();
     this.reconnectTimers.forEach((t) => clearTimeout(t));
     this.reconnectTimers.clear();
+  }
+
+  static calcPayout(playerCount: number): number {
+    return Math.floor(playerCount * GameRoom.ENTRY_FEE * PAYOUT_MULTIPLIER);
   }
 
   static readonly ENTRY_FEE = ENTRY_FEE;
