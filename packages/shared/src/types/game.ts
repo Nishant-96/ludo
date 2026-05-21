@@ -1,11 +1,11 @@
-import type { PlayerColor } from './user';
+import type { PlayerColor } from "./user";
 
-export type BoardPosition = number; // -1 = base, 0-51 = main track, 52-57 = home column, 58 = home
+export type BoardPosition = number; // -1 = base, 0-55 = main track, 56-61 = home column, 62 = home
 
 export type PawnIndex = 0 | 1 | 2 | 3;
 
 export interface Pawn {
-  id: string; // e.g. "red-0"
+  id: string;
   color: PlayerColor;
   index: PawnIndex;
   position: BoardPosition;
@@ -22,7 +22,12 @@ export interface PlayerGameState {
   isForfeited: boolean;
 }
 
-export type GameStatus = 'waiting' | 'starting' | 'active' | 'paused' | 'completed';
+export type GameStatus =
+  | "waiting"
+  | "starting"
+  | "active"
+  | "paused"
+  | "completed";
 
 export interface GameState {
   matchId: string;

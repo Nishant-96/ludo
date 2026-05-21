@@ -11,8 +11,8 @@ export const RequireAuth: FC<RequireAuthProps> = ({ children }) => {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-dvh items-center justify-center bg-slate-900">
-        <div role="status" aria-label="Loading" className="h-8 w-8 animate-spin rounded-full border-2 border-slate-600 border-t-white" />
+      <div className="flex min-h-dvh items-center justify-center bg-bg">
+        <div role="status" aria-label="Loading" className="h-8 w-8 animate-spin rounded-full border-2 border-surface-3 border-t-primary" />
       </div>
     );
   }

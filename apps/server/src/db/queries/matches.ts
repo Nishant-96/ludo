@@ -40,7 +40,6 @@ export const recordMove = async (params: {
   if (error) throw new Error(`Failed to record move: ${error.message}`);
 };
 
-// Called in the catch path of game:start to roll back a match whose fee deduction failed.
 export const deleteMatch = async (matchId: string): Promise<void> => {
   const { error: pErr } = await db.from('match_participants').delete().eq('match_id', matchId);
   if (pErr) throw new Error(`Failed to delete match participants: ${pErr.message}`);

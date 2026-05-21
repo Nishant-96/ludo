@@ -1,9 +1,14 @@
-import type { GameState, PlayerGameState, Pawn, PlayerColor } from '@ludo/shared';
-import type { AppServer } from '../socket';
-import { LudoEngine } from './LudoEngine';
-import { payoutWinner } from '../db/queries/wallets';
-import { endMatch } from '../db/queries/matches';
-import { getLeaderboard } from '../db/queries/chats';
+import type {
+  GameState,
+  PlayerGameState,
+  Pawn,
+  PlayerColor,
+} from "@ludo/shared";
+import type { AppServer } from "../socket";
+import { LudoEngine } from "./LudoEngine";
+import { payoutWinner } from "../db/queries/wallets";
+import { endMatch } from "../db/queries/matches";
+import { getLeaderboard } from "../db/queries/chats";
 
 const TURN_DURATION_SECONDS = 30;
 const RECONNECT_GRACE_SECONDS = 60;
@@ -74,7 +79,7 @@ export class GameRoom {
     this.gameState = {
       matchId,
       roomCode: this.roomCode,
-      status: 'active',
+      status: "active",
       players: playerStates,
       currentTurnUserId: this.players[0].userId,
       turnOrder: this.players.map((p) => p.userId),
@@ -93,7 +98,9 @@ export class GameRoom {
     this.turnTimer = setInterval(() => {
       if (!this.gameState) return;
       this.gameState.timeRemaining -= 1;
-      io.to(this.roomCode).emit('timer:tick', { timeRemaining: this.gameState.timeRemaining });
+      io.to(this.roomCode).emit("timer:tick", {
+        timeRemaining: this.gameState.timeRemaining,
+      });
       if (this.gameState.timeRemaining <= 0) {
         this.clearTurnTimer();
         onExpire();
@@ -109,14 +116,16 @@ export class GameRoom {
   }
 
   advanceTurn(): string {
-    if (!this.gameState) throw new Error('No active game state');
+    if (!this.gameState) throw new Error("No active game state");
 
     const activePlayers = this.gameState.turnOrder.filter((id) => {
       const p = this.gameState!.players.find((pl) => pl.userId === id);
       return p && !p.isForfeited;
     });
 
-    const currentIndex = activePlayers.indexOf(this.gameState.currentTurnUserId);
+    const currentIndex = activePlayers.indexOf(
+      this.gameState.currentTurnUserId,
+    );
     const nextIndex = (currentIndex + 1) % activePlayers.length;
     this.gameState.currentTurnUserId = activePlayers[nextIndex];
     this.gameState.lastDiceValue = null;
@@ -129,9 +138,12 @@ export class GameRoom {
   advanceTurnWithTimer(io: AppServer): void {
     const nextId = this.advanceTurn();
     if (!this.gameState) return;
-    this.gameState.status = 'active';
-    io.to(this.roomCode).emit('game:state', { gameState: this.gameState });
-    io.to(this.roomCode).emit('turn:changed', { playerId: nextId, timeRemaining: TURN_DURATION_SECONDS });
+    this.gameState.status = "active";
+    io.to(this.roomCode).emit("game:state", { gameState: this.gameState });
+    io.to(this.roomCode).emit("turn:changed", {
+      playerId: nextId,
+      timeRemaining: TURN_DURATION_SECONDS,
+    });
     this.startTurnTimer(io, () => this.advanceTurnWithTimer(io));
   }
 
@@ -141,38 +153,56 @@ export class GameRoom {
 
     player.isConnected = false;
 
+    const playerState = this.gameState?.players.find(
+      (p) => p.userId === userId,
+    );
+    if (playerState) playerState.isConnected = false;
+
     if (this.gameState) {
-      const playerState = this.gameState.players.find((p) => p.userId === userId);
-      if (playerState) playerState.isConnected = false;
-
-      this.gameState.status = 'paused';
-      this.clearTurnTimer();
-      io.to(this.roomCode).emit('player:disconnected', { userId, gracePeriodSeconds: RECONNECT_GRACE_SECONDS });
-
-      const timer = setTimeout(() => this.forfeitPlayer(io, userId), RECONNECT_GRACE_SECONDS * 1000);
-      this.reconnectTimers.set(userId, timer);
+      this.gameState.status = "paused";
     }
+    this.clearTurnTimer();
+    io.to(this.roomCode).emit("player:disconnected", {
+      userId,
+      gracePeriodSeconds: RECONNECT_GRACE_SECONDS,
+    });
+
+    const timer = setTimeout(
+      () => this.forfeitPlayer(io, userId),
+      RECONNECT_GRACE_SECONDS * 1000,
+    );
+    this.reconnectTimers.set(userId, timer);
   }
 
   handlePlayerReconnect(io: AppServer, userId: string, socketId: string): void {
     const timer = this.reconnectTimers.get(userId);
-    if (timer) { clearTimeout(timer); this.reconnectTimers.delete(userId); }
+    if (timer) {
+      clearTimeout(timer);
+      this.reconnectTimers.delete(userId);
+    }
 
     const player = this.getPlayer(userId);
-    if (player) { player.isConnected = true; player.socketId = socketId; }
+    if (player) {
+      player.isConnected = true;
+      player.socketId = socketId;
+    }
 
     if (this.gameState) {
-      const playerState = this.gameState.players.find((p) => p.userId === userId);
+      const playerState = this.gameState.players.find(
+        (p) => p.userId === userId,
+      );
       if (playerState) playerState.isConnected = true;
 
-      io.to(this.roomCode).emit('player:reconnected', { userId });
-      io.to(this.roomCode).emit('game:state', { gameState: this.gameState });
+      io.to(this.roomCode).emit("player:reconnected", { userId });
+      io.to(this.roomCode).emit("game:state", { gameState: this.gameState });
 
-      if (player?.isForfeited) return; // observer only — no turn timer restart
+      if (player?.isForfeited) return;
 
-      const allConnected = this.players.filter((p) => !p.isForfeited).every((p) => p.isConnected);
+      const allConnected = this.players
+        .filter((p) => !p.isForfeited)
+        .every((p) => p.isConnected);
       if (allConnected) {
-        this.gameState.status = 'active';
+        this.gameState.status = "active";
         this.startTurnTimer(io, () => this.advanceTurnWithTimer(io));
       }
     }
@@ -191,7 +221,7 @@ export class GameRoom {
 
     if (activePlayers.length === 1) {
       const winner = activePlayers[0];
-      this.gameState.status = 'completed';
+      this.gameState.status = "completed";
       this.gameState.winnerId = winner.userId;
       this.clearTurnTimer();
 
@@ -200,33 +230,54 @@ export class GameRoom {
       const matchId = this.matchId;
 
       if (!matchId) {
-        io.to(this.roomCode).emit('game:over', { result: { winnerId, winnerDisplayName: displayName, payouts: {} } });
+        io.to(this.roomCode).emit("game:over", {
+          result: { winnerId, winnerDisplayName: displayName, payouts: {} },
+        });
         return;
       }
 
-      Promise.all([endMatch(matchId, winnerId), payoutWinner(winnerId, winnerPayout, matchId)])
+      Promise.all([
+        endMatch(matchId, winnerId),
+        payoutWinner(winnerId, winnerPayout, matchId),
+      ])
         .then(() => {
-          io.to(this.roomCode).emit('game:over', { result: { winnerId, winnerDisplayName: displayName, payouts: { [winnerId]: winnerPayout } } });
-          getLeaderboard().then((entries) => io.emit('leaderboard:update', { entries })).catch(() => null);
+          io.to(this.roomCode).emit("game:over", {
+            result: {
+              winnerId,
+              winnerDisplayName: displayName,
+              payouts: { [winnerId]: winnerPayout },
+            },
+          });
+          getLeaderboard()
+            .then((entries) => io.emit("leaderboard:update", { entries }))
+            .catch(() => null);
         })
         .catch(() => {
-          io.to(this.roomCode).emit('game:over', { result: { winnerId, winnerDisplayName: displayName, payouts: { [winnerId]: 0 } } });
+          io.to(this.roomCode).emit("game:over", {
+            result: {
+              winnerId,
+              winnerDisplayName: displayName,
+              payouts: { [winnerId]: 0 },
+            },
+          });
         });
 
       return;
     }
 
     if (this.gameState.currentTurnUserId === userId) {
-      io.to(this.roomCode).emit('game:state', { gameState: this.gameState });
+      io.to(this.roomCode).emit("game:state", { gameState: this.gameState });
       this.advanceTurnWithTimer(io);
     } else {
-      this.gameState.status = 'active';
-      io.to(this.roomCode).emit('game:state', { gameState: this.gameState });
+      this.gameState.status = "active";
+      io.to(this.roomCode).emit("game:state", { gameState: this.gameState });
     }
   }
 
   getPawnsByPlayer(userId: string): Pawn[] {
-    return this.gameState?.players.find((p) => p.userId === userId)?.pawns ?? [];
+    return (
+      this.gameState?.players.find((p) => p.userId === userId)?.pawns ?? []
+    );
   }
 
   cleanup(): void {

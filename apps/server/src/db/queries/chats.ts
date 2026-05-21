@@ -9,8 +9,6 @@ export interface ChatMessage {
   timestamp: string;
 }
 
-// Returns the server-assigned created_at timestamp so the broadcast uses the same
-// value as the DB record — prevents live/replay timestamp mismatch.
 export const saveMessage = async (params: {
   roomId: string;
   userId: string;

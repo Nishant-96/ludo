@@ -114,6 +114,10 @@ export const addPlayerToRoom = async (params: {
   if (error) throw new Error(`Failed to add player to room: ${error.message}`);
 };
 
+export const removePlayerFromRoom = async (roomId: string, userId: string): Promise<void> => {
+  await db.from('room_players').delete().eq('room_id', roomId).eq('user_id', userId);
+};
+
 export const getNextAvailableColorAndCorner = async (
   roomId: string
 ): Promise<{ color: PlayerColor; corner: 0 | 1 | 2 | 3 }> => {

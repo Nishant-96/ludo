@@ -1,7 +1,7 @@
-import type { AppServer, AppSocket } from '../index';
-import type { GameRoomRegistry } from '../../game/GameRoomRegistry';
-import { saveMessage } from '../../db/queries/chats';
-import { getUserById } from '../../db/queries/users';
+import type { AppServer, AppSocket } from "../index";
+import type { GameRoomRegistry } from "../../game/GameRoomRegistry";
+import { saveMessage } from "../../db/queries/chats";
+import { getUserById } from "../../db/queries/users";
 
 const MAX_MESSAGE_LENGTH = 500;
 const RATE_LIMIT_MAX = 5;
@@ -11,7 +11,9 @@ const messageTimes = new Map<string, number[]>();
 
 const isRateLimited = (userId: string): boolean => {
   const now = Date.now();
-  const times = (messageTimes.get(userId) ?? []).filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+  const times = (messageTimes.get(userId) ?? []).filter(
+    (t) => now - t < RATE_LIMIT_WINDOW_MS,
+  );
   if (times.length >= RATE_LIMIT_MAX) return true;
   messageTimes.set(userId, [...times, now]);
   return false;
@@ -20,43 +22,46 @@ const isRateLimited = (userId: string): boolean => {
 export const registerChatHandlers = (
   io: AppServer,
   socket: AppSocket,
-  registry: GameRoomRegistry
+  registry: GameRoomRegistry,
 ): void => {
-  socket.on('chat:send', async ({ roomCode, message }, callback) => {
+  socket.on("chat:send", async ({ roomCode, message }, callback) => {
     try {
       const trimmed = message.trim();
 
       if (!trimmed || trimmed.length > MAX_MESSAGE_LENGTH) {
-        callback({ ok: false, error: 'Invalid message' });
+        callback({ ok: false, error: "Invalid message" });
         return;
       }
 
       if (isRateLimited(socket.userId)) {
-        callback({ ok: false, error: 'Sending messages too fast — slow down' });
+        callback({ ok: false, error: "Sending messages too fast — slow down" });
         return;
       }
 
       if (!socket.rooms.has(roomCode)) {
-        callback({ ok: false, error: 'Not in this room' });
+        callback({ ok: false, error: "Not in this room" });
         return;
       }
 
       const gameRoom = registry.get(roomCode);
       if (!gameRoom?.roomId) {
-        callback({ ok: false, error: 'Room not found' });
+        callback({ ok: false, error: "Room not found" });
         return;
       }
 
       const user = await getUserById(socket.userId);
       if (!user) {
-        callback({ ok: false, error: 'User not found' });
+        callback({ ok: false, error: "User not found" });
         return;
       }
 
-      // DB-assigned timestamp ensures live and replayed messages share the same ordering key
-      const timestamp = await saveMessage({ roomId: gameRoom.roomId, userId: socket.userId, message: trimmed });
+      const timestamp = await saveMessage({
+        roomId: gameRoom.roomId,
+        userId: socket.userId,
+        message: trimmed,
+      });
 
-      io.to(roomCode).emit('chat:message', {
+      io.to(roomCode).emit("chat:message", {
         senderId: socket.userId,
         displayName: user.displayName,
         message: trimmed,
@@ -65,8 +70,8 @@ export const registerChatHandlers = (
 
       callback({ ok: true, data: null });
     } catch (err) {
-      console.error('[chat:send] Failed to send message', err);
-      callback({ ok: false, error: 'Failed to send message' });
+      console.error("[chat:send] Failed to send message", err);
+      callback({ ok: false, error: "Failed to send message" });
     }
   });
 };

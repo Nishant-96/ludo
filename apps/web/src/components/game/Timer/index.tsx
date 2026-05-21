@@ -1,5 +1,5 @@
-import { type FC } from 'react';
-import { motion } from 'framer-motion';
+import { type FC } from "react";
+import { motion } from "framer-motion";
 
 interface TimerProps {
   timeRemaining: number;
@@ -17,24 +17,29 @@ export const Timer: FC<TimerProps> = ({ timeRemaining, totalSeconds = 30 }) => {
   return (
     <div className="relative flex h-14 w-14 items-center justify-center">
       <svg className="absolute inset-0 -rotate-90" viewBox="0 0 50 50">
-        {/* Track */}
-        <circle cx={25} cy={25} r={RADIUS} fill="none" stroke="#334155" strokeWidth={4} />
-        {/* Progress arc */}
+        <circle
+          cx={25}
+          cy={25}
+          r={RADIUS}
+          fill="none"
+          stroke="#334155"
+          strokeWidth={4}
+        />
         <motion.circle
           cx={25}
           cy={25}
           r={RADIUS}
           fill="none"
-          stroke={isWarning ? '#F87171' : '#6366F1'}
+          stroke={isWarning ? "#F87171" : "#7C3AED"}
           strokeWidth={4}
           strokeLinecap="round"
           strokeDasharray={CIRCUMFERENCE}
           animate={{ strokeDashoffset: dashOffset }}
-          transition={{ duration: 0.5, ease: 'linear' }}
+          transition={{ duration: 0.5, ease: "linear" }}
         />
       </svg>
       <motion.span
-        animate={{ color: isWarning ? '#F87171' : '#e2e8f0' }}
+        animate={{ color: isWarning ? "#F87171" : "#e2e8f0" }}
         className="relative text-sm font-bold tabular-nums"
       >
         {Math.max(0, timeRemaining)}

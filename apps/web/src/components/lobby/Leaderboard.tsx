@@ -6,20 +6,22 @@ interface LeaderboardProps {
   entries: LeaderboardEntry[];
   isLoading: boolean;
   currentUserId: string;
+  previewCount?: number;
 }
 
-const RANK_STYLES: Record<number, string> = {
-  1: 'text-amber-400 font-bold',
-  2: 'text-slate-300 font-semibold',
-  3: 'text-amber-700 font-semibold',
-};
+const RANK_ICON: Record<number, string> = { 1: '🥇', 2: '🥈', 3: '🥉' };
 
-export const Leaderboard: FC<LeaderboardProps> = ({ entries, isLoading, currentUserId }) => {
+export const Leaderboard: FC<LeaderboardProps> = ({
+  entries,
+  isLoading,
+  currentUserId,
+  previewCount,
+}) => {
   if (isLoading) {
     return (
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1.5">
         {[1, 2, 3, 4, 5].map((i) => (
-          <div key={i} className="h-10 animate-pulse rounded-lg bg-slate-800" />
+          <div key={i} className="h-10 animate-pulse rounded-lg bg-surface-2" />
         ))}
       </div>
     );
@@ -29,30 +31,36 @@ export const Leaderboard: FC<LeaderboardProps> = ({ entries, isLoading, currentU
     return <p className="py-4 text-center text-sm text-slate-500">No players yet</p>;
   }
 
+  const displayEntries = previewCount ? entries.slice(0, previewCount) : entries;
+
   return (
-    <ol className="flex flex-col gap-1">
-      {entries.map((entry) => (
-        <li
-          key={entry.userId}
-          className={`flex items-center gap-3 rounded-lg px-3 py-2 ${
-            entry.userId === currentUserId ? 'bg-indigo-900/40' : 'hover:bg-slate-800/60'
-          }`}
-        >
-          <span className={`w-5 text-center text-sm ${RANK_STYLES[entry.rank] ?? 'text-slate-500'}`}>
-            {entry.rank}
-          </span>
-          <Avatar src={entry.avatarUrl} displayName={entry.displayName} size="sm" />
-          <span className="min-w-0 flex-1 truncate text-sm text-slate-200">
-            {entry.displayName}
-            {entry.userId === currentUserId && (
-              <span className="ml-1 text-xs text-indigo-400">(you)</span>
-            )}
-          </span>
-          <span className="shrink-0 text-sm font-medium text-amber-400">
-            {entry.balance.toLocaleString()}
-          </span>
-        </li>
-      ))}
+    <ol className="flex flex-col gap-0.5">
+      {displayEntries.map((entry) => {
+        const isMe = entry.userId === currentUserId;
+        return (
+          <li
+            key={entry.userId}
+            className={`flex items-center gap-3 rounded-lg px-3 py-2 transition-colors ${
+              isMe ? 'bg-primary/15 border border-primary/20' : 'hover:bg-surface-2'
+            }`}
+          >
+            <span className="w-6 text-center text-sm">
+              {RANK_ICON[entry.rank] ?? (
+                <span className="text-slate-500 font-medium">{entry.rank}</span>
+              )}
+            </span>
+            <Avatar src={entry.avatarUrl} displayName={entry.displayName} size="sm" />
+            <span className="min-w-0 flex-1 truncate text-sm text-slate-200">
+              {entry.displayName}
+              {isMe && <span className="ml-1 text-xs text-primary">(You)</span>}
+            </span>
+            <span className="shrink-0 flex items-center gap-1 text-sm font-semibold text-coin">
+              <span className="text-xs">🪙</span>
+              {entry.balance.toLocaleString()}
+            </span>
+          </li>
+        );
+      })}
     </ol>
   );
 };

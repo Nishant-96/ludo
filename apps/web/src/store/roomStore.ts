@@ -1,13 +1,14 @@
-import { create } from 'zustand';
-import type { Room, RoomPlayer } from '@ludo/shared';
+import { create } from "zustand";
+import type { Room, RoomPlayer } from "@ludo/shared";
 
 interface RoomStore {
   room: Room | null;
   isSocketConnected: boolean;
-  isSocketReconnectFailed: boolean; // true after all reconnection attempts are exhausted
-  gracePeriodRemaining: number | null; // seconds remaining for disconnected player to reconnect
+  isSocketReconnectFailed: boolean;
+  gracePeriodRemaining: number | null;
   setRoom: (room: Room) => void;
   addPlayer: (player: RoomPlayer) => void;
+  removePlayer: (userId: string) => void;
   updatePlayerConnection: (userId: string, isConnected: boolean) => void;
   setSocketConnected: (connected: boolean) => void;
   setSocketReconnectFailed: (failed: boolean) => void;
@@ -26,7 +27,19 @@ export const useRoomStore = create<RoomStore>((set) => ({
       if (!state.room) return state;
       const exists = state.room.players.some((p) => p.userId === player.userId);
       if (exists) return state;
-      return { room: { ...state.room, players: [...state.room.players, player] } };
+      return {
+        room: { ...state.room, players: [...state.room.players, player] },
+      };
+    }),
+  removePlayer: (userId) =>
+    set((state) => {
+      if (!state.room) return state;
+      return {
+        room: {
+          ...state.room,
+          players: state.room.players.filter((p) => p.userId !== userId),
+        },
+      };
     }),
   updatePlayerConnection: (userId, isConnected) =>
     set((state) => {
@@ -35,13 +48,20 @@ export const useRoomStore = create<RoomStore>((set) => ({
         room: {
           ...state.room,
           players: state.room.players.map((p) =>
-            p.userId === userId ? { ...p, isConnected } : p
+            p.userId === userId ? { ...p, isConnected } : p,
           ),
         },
       };
     }),
   setSocketConnected: (connected) => set({ isSocketConnected: connected }),
-  setSocketReconnectFailed: (failed) => set({ isSocketReconnectFailed: failed }),
+  setSocketReconnectFailed: (failed) =>
+    set({ isSocketReconnectFailed: failed }),
   setGracePeriodRemaining: (seconds) => set({ gracePeriodRemaining: seconds }),
-  clearRoom: () => set({ room: null, isSocketConnected: true, isSocketReconnectFailed: false, gracePeriodRemaining: null }),
+  clearRoom: () =>
+    set({
+      room: null,
+      isSocketConnected: true,
+      isSocketReconnectFailed: false,
+      gracePeriodRemaining: null,
+    }),
 }));

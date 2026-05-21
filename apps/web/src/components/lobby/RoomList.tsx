@@ -12,7 +12,7 @@ export const RoomList: FC<RoomListProps> = ({ rooms, isLoading }) => {
     return (
       <div className="flex flex-col gap-2">
         {[1, 2, 3].map((i) => (
-          <div key={i} className="h-16 animate-pulse rounded-xl bg-slate-800" />
+          <div key={i} className="h-16 animate-pulse rounded-xl bg-surface-2" />
         ))}
       </div>
     );
@@ -20,7 +20,7 @@ export const RoomList: FC<RoomListProps> = ({ rooms, isLoading }) => {
 
   if (rooms.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-slate-700 py-10 text-center text-slate-500">
+      <div className="rounded-xl border border-dashed border-border py-8 text-center text-sm text-slate-500">
         No open rooms. Create one!
       </div>
     );

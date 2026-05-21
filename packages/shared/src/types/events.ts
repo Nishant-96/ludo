@@ -38,6 +38,7 @@ export interface ClientToServerEvents {
     payload: { roomCode: string },
     callback: (res: SocketResponse<null>) => void,
   ) => void;
+  "room:leave": (payload: { roomCode: string }) => void;
 }
 
 export interface ServerToClientEvents {
@@ -49,6 +50,7 @@ export interface ServerToClientEvents {
     gracePeriodSeconds: number;
   }) => void;
   "player:reconnected": (payload: { userId: string }) => void;
+  "player:left": (payload: { userId: string }) => void;
   "dice:result": (payload: {
     value: number;
     playerId: string;

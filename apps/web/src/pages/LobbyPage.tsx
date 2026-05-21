@@ -1,14 +1,20 @@
-import { type FC, useEffect, useState, useCallback } from 'react';
-import { RoomList } from '@/components/lobby/RoomList';
-import { Leaderboard } from '@/components/lobby/Leaderboard';
-import { CreateRoomModal } from '@/components/lobby/CreateRoomModal';
-import { Avatar } from '@/components/ui/Avatar';
-import { Button } from '@/components/ui/Button';
-import { useUserStore } from '@/store/userStore';
-import { fetchRooms, fetchLeaderboard, fetchBalance, fetchActivePlayerCount } from '@/services/lobby';
-import { signOut } from '@/services/auth';
-import { getSocket } from '@/lib/socket';
-import type { RoomSummary, LeaderboardEntry } from '@ludo/shared';
+import { type FC, useEffect, useState, useCallback } from "react";
+import { RoomList } from "@/components/lobby/RoomList";
+import { Leaderboard } from "@/components/lobby/Leaderboard";
+import { CreateRoomModal } from "@/components/lobby/CreateRoomModal";
+import { LeaderboardModal } from "@/components/lobby/LeaderboardModal";
+import { Avatar } from "@/components/ui/Avatar";
+import { Button } from "@/components/ui/Button";
+import { useUserStore } from "@/store/userStore";
+import {
+  fetchRooms,
+  fetchLeaderboard,
+  fetchBalance,
+  fetchActivePlayerCount,
+} from "@/services/lobby";
+import { signOut } from "@/services/auth";
+import { getSocket } from "@/lib/socket";
+import type { RoomSummary, LeaderboardEntry } from "@ludo/shared";
 
 export const LobbyPage: FC = () => {
   const { user, balance, updateBalance } = useUserStore();
@@ -17,15 +23,18 @@ export const LobbyPage: FC = () => {
   const [isLoadingRooms, setIsLoadingRooms] = useState(true);
   const [isLoadingLeaderboard, setIsLoadingLeaderboard] = useState(true);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
-  const [activePlayerCount, setActivePlayerCount] = useState<number | null>(null);
+  const [activePlayerCount, setActivePlayerCount] = useState<number | null>(
+    null,
+  );
 
   const loadRooms = useCallback(async (): Promise<void> => {
     try {
       const data = await fetchRooms();
       setRooms(data);
     } catch (err) {
-      console.error('Failed to load rooms', err);
+      console.error("Failed to load rooms", err);
     } finally {
       setIsLoadingRooms(false);
     }
@@ -36,7 +45,7 @@ export const LobbyPage: FC = () => {
       const data = await fetchLeaderboard();
       setLeaderboard(data);
     } catch (err) {
-      console.error('Failed to load leaderboard', err);
+      console.error("Failed to load leaderboard", err);
     } finally {
       setIsLoadingLeaderboard(false);
     }
@@ -45,9 +54,12 @@ export const LobbyPage: FC = () => {
   useEffect(() => {
     void loadRooms();
     void loadLeaderboard();
-    // Re-sync balance on mount — game:over updates it in-session but a refresh bypasses that handler
-    fetchBalance().then(updateBalance).catch(() => null);
-    fetchActivePlayerCount().then(setActivePlayerCount).catch(() => null);
+    fetchBalance()
+      .then(updateBalance)
+      .catch(() => null);
+    fetchActivePlayerCount()
+      .then(setActivePlayerCount)
+      .catch(() => null);
 
     const interval = setInterval(() => void loadRooms(), 10_000);
     return () => clearInterval(interval);
@@ -55,13 +67,17 @@ export const LobbyPage: FC = () => {
 
   useEffect(() => {
     const socket = getSocket();
-    const handleLeaderboardUpdate = ({ entries }: { entries: LeaderboardEntry[] }): void => {
+    const handleLeaderboardUpdate = ({
+      entries,
+    }: {
+      entries: LeaderboardEntry[];
+    }): void => {
       setLeaderboard(entries);
       setIsLoadingLeaderboard(false);
     };
-    socket.on('leaderboard:update', handleLeaderboardUpdate);
+    socket.on("leaderboard:update", handleLeaderboardUpdate);
     return () => {
-      socket.off('leaderboard:update', handleLeaderboardUpdate);
+      socket.off("leaderboard:update", handleLeaderboardUpdate);
     };
   }, []);
 
@@ -73,59 +89,116 @@ export const LobbyPage: FC = () => {
   if (!user) return null;
 
   return (
-    <div className="flex min-h-dvh flex-col bg-slate-900">
-      <header className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+    <div className="flex min-h-dvh flex-col bg-bg">
+      <header className="flex items-center justify-between border-b border-border px-4 py-3 bg-surface">
         <div className="flex items-center gap-3">
-          <Avatar src={user.avatarUrl} displayName={user.displayName} size="md" />
+          <Avatar
+            src={user.avatarUrl}
+            displayName={user.displayName}
+            size="md"
+            showOnline
+          />
           <div>
-            <p className="text-sm font-semibold text-white">{user.displayName}</p>
+            <p className="text-sm font-bold text-white">{user.displayName}</p>
             <div className="flex items-center gap-2">
-              <p className="text-xs text-amber-400">{balance.toLocaleString()} coins</p>
+              <span className="h-1.5 w-1.5 rounded-full bg-online" />
+              <span className="text-xs text-online font-medium">Online</span>
               {activePlayerCount !== null && (
-                <span className="flex items-center gap-1 text-xs text-slate-500">
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                  {activePlayerCount} online
+                <span className="text-xs text-slate-500">
+                  · {activePlayerCount} active
                 </span>
               )}
             </div>
           </div>
         </div>
-        <Button variant="ghost" size="sm" isLoading={isSigningOut} onClick={handleSignOut}>
-          Sign out
-        </Button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 rounded-full bg-surface-2 border border-border px-3 py-1.5">
+            <span className="text-sm">🪙</span>
+            <span className="text-sm font-bold text-coin">
+              {balance.toLocaleString()}
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            isLoading={isSigningOut}
+            onClick={handleSignOut}
+          >
+            Sign out
+          </Button>
+        </div>
       </header>
 
-      <main className="flex flex-1 flex-col gap-6 overflow-y-auto p-4">
-        <section>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-base font-semibold text-white">Open Rooms</h2>
-            <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={() => void loadRooms()}>
-                Refresh
-              </Button>
-              <Button size="sm" onClick={() => setIsCreateModalOpen(true)}>
-                + Create
-              </Button>
+      <main className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+        <div className="card p-4">
+          <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-1">
+            Wallet Balance
+          </p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">🪙</span>
+              <span className="text-3xl font-black text-white">
+                {balance.toLocaleString()}
+              </span>
             </div>
           </div>
-          <RoomList rooms={rooms} isLoading={isLoadingRooms} />
-        </section>
+        </div>
 
-        <section>
-          <h2 className="mb-3 text-base font-semibold text-white">Leaderboard</h2>
-          <div className="rounded-xl bg-slate-800/50 px-2 py-1">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="card p-4 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-bold text-white">Leaderboard</h2>
+              <button
+                onClick={() => setIsLeaderboardOpen(true)}
+                className="text-xs font-semibold text-primary hover:text-primary-light transition-colors"
+              >
+                View All
+              </button>
+            </div>
             <Leaderboard
               entries={leaderboard}
               isLoading={isLoadingLeaderboard}
               currentUserId={user.id}
+              previewCount={5}
             />
           </div>
-        </section>
+
+          <div className="card p-4 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-bold text-white">Active Rooms</h2>
+              <button
+                onClick={() => void loadRooms()}
+                className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-2 text-slate-400 hover:text-white transition-colors text-xs"
+                title="Refresh"
+                aria-label="Refresh rooms"
+              >
+                ↻
+              </button>
+            </div>
+            <RoomList rooms={rooms} isLoading={isLoadingRooms} />
+          </div>
+        </div>
+
+        <Button
+          size="lg"
+          className="w-full"
+          onClick={() => setIsCreateModalOpen(true)}
+        >
+          + Create Room
+        </Button>
       </main>
 
       <CreateRoomModal
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
+      />
+
+      <LeaderboardModal
+        isOpen={isLeaderboardOpen}
+        onClose={() => setIsLeaderboardOpen(false)}
+        entries={leaderboard}
+        isLoading={isLoadingLeaderboard}
+        currentUserId={user.id}
       />
     </div>
   );
